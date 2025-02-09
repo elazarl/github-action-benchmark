@@ -6,6 +6,7 @@ import { Config, ToolType } from './config';
 export interface BenchmarkResult {
     name: string;
     value: number;
+    baseline?: number;
     range?: string;
     unit: string;
     extra?: string;
@@ -659,8 +660,8 @@ function extractBenchmarkDotnetResult(output: string): BenchmarkResult[] {
 function extractCustomBenchmarkResult(output: string): BenchmarkResult[] {
     try {
         const json: BenchmarkResult[] = JSON.parse(output);
-        return json.map(({ name, value, unit, range, extra }) => {
-            return { name, value, unit, range, extra };
+        return json.map(({ name, value, baseline, unit, range, extra }) => {
+            return { name, value, baseline, unit, range, extra };
         });
     } catch (err: any) {
         throw new Error(

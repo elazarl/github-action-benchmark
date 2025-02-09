@@ -84,29 +84,8 @@ export const DEFAULT_INDEX_HTML = String.raw`<!DOCTYPE html>
       }
     </style>
     <title>Benchmarks</title>
-  </head>
-
-  <body>
-    <header id="header">
-      <div class="header-item">
-        <strong class="header-label">Last Update:</strong>
-        <span id="last-update"></span>
-      </div>
-      <div class="header-item">
-        <strong class="header-label">Repository:</strong>
-        <a id="repository-link" rel="noopener"></a>
-      </div>
-    </header>
-    <main id="main"></main>
-    <footer>
-      <button id="dl-button">Download data as JSON</button>
-      <div class="spacer"></div>
-      <div class="small">Powered by <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark">github-action-benchmark</a></div>
-    </footer>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
-    <script src="data.js"></script>
-    <script>
+    <script id="main-script">
+      'use strict';
 const subtle = window.crypto.subtle;
 
 function base64ToArrayBuffer(base64) {
@@ -120,16 +99,6 @@ function base64ToArrayBuffer(base64) {
     }
 
     return bytes.buffer;
-}
-
-function _arrayBufferToBase64( buffer ) {
-    var binary = '';
-    var bytes = new Uint8Array( buffer );
-    var len = bytes.byteLength;
-    for (var i = 0; i < len; i++) {
-        binary += String.fromCharCode( bytes[ i ] );
-    }
-    return btoa( binary );
 }
 
 async function deriveKey(password) {
@@ -157,27 +126,21 @@ async function deriveKey(password) {
   return key;
 }
 
-async function enc(str, password) {
-  const te = new TextEncoder();
-  const iv = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ,11, 12]);
-  let key = await deriveKey(password);
+function getPasswordFromHash() {
+    const hash = window.location.hash;
+    const prefix = "#password:";
 
-  let ciphertext = await subtle.encrypt(
-    {
-      name: "AES-GCM", // CTR and CBC modes are also available.
-      iv // The initialization vector.
-    },
-    key, // The CryptoKey. You can get one with window.crypto.subtle.importKey().
-    te.encode(str) // The data to encrypt
-  );
-  return _arrayBufferToBase64(ciphertext);
+    if (hash.startsWith(prefix)) {
+        return hash.substring(prefix.length);
+    }
+    return null;
 }
 
 async function dec(str, password) {
-  const te = new TextEncoder();
-  const iv = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ,11, 12]);
   let key = await deriveKey(password);
   let ciphertext = base64ToArrayBuffer(str);
+  const iv = ciphertext.slice(0, 12);
+  ciphertext = ciphertext.slice(12)
 
   let plaintext = await subtle.decrypt(
     {
@@ -189,15 +152,19 @@ async function dec(str, password) {
   );
   return new TextDecoder().decode(plaintext);
 }
-let ciphertext = BENCHMARK_DATA.entries;
-let password = prompt('please enter password');
-let plaintext = await dec(ciphertext, password);
-BENCHMARK_DATA.entries = JSON.parse(plaintext);
+window.addEventListener('load',
+      async function() {
 
-    </script>
-    <script id="main-script">
-      'use strict';
-      (function() {
+  let ciphertext = BENCHMARK_DATA.entries;
+  let password = getPasswordFromHash() || prompt('please enter password');
+  try {
+    let plaintext = await dec(ciphertext, password);
+    BENCHMARK_DATA.entries = JSON.parse(plaintext);
+  } catch (err) {
+     document.body.innerHTML = "<h1 style='color: red; font-size: 5rem; text-align: center; margin-top: 20%; font-weight: bold;'>BAD PASSWORD, refresh</h1>";
+     return;
+  }
+
         // Colors from https://github.com/github/linguist/blob/master/lib/linguist/languages.yml
         const toolColors = {
           cargo: '#dea584',
@@ -218,6 +185,7 @@ BENCHMARK_DATA.entries = JSON.parse(plaintext);
         function init() {
           function collectBenchesPerTestCase(entries) {
             const map = new Map();
+            console.log(entries);
             for (const entry of entries) {
               const {commit, date, tool, benches} = entry;
               for (const bench of benches) {
@@ -265,6 +233,7 @@ BENCHMARK_DATA.entries = JSON.parse(plaintext);
             parent.appendChild(canvas);
 
             const color = toolColors[dataset.length > 0 ? dataset[0].tool : '_'];
+            const baselineColor = toolColors[0];
             const data = {
               labels: dataset.map(d => d.commit.id.slice(0, 7)),
               datasets: [
@@ -273,6 +242,12 @@ BENCHMARK_DATA.entries = JSON.parse(plaintext);
                   data: dataset.map(d => d.bench.value),
                   borderColor: color,
                   backgroundColor: color + '60', // Add alpha for #rrggbbaa
+                },
+                {
+                  label: "baseline: "+ name,
+                  data: dataset.map(d => d.bench.baseline),
+                  borderColor: baselineColor,
+                  backgroundColor: baselineColor + '60', // Add alpha for #rrggbbaa
                 }
               ],
             };
@@ -364,7 +339,32 @@ BENCHMARK_DATA.entries = JSON.parse(plaintext);
         }
 
         renderAllChars(init()); // Start
-      })();
+      });
+    </script>
+  </head>
+
+  <body>
+    <header id="header">
+      <div class="header-item">
+        <strong class="header-label">Last Update:</strong>
+        <span id="last-update"></span>
+      </div>
+      <div class="header-item">
+        <strong class="header-label">Repository:</strong>
+        <a id="repository-link" rel="noopener"></a>
+      </div>
+    </header>
+    <main id="main"></main>
+    <footer>
+      <button id="dl-button">Download data as JSON</button>
+      <div class="spacer"></div>
+      <div class="small">Powered by <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark">github-action-benchmark</a></div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
+    <script src="data.js"></script>
+    <script>
+
     </script>
   </body>
 </html>

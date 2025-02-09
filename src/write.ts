@@ -27,7 +27,7 @@ const DEFAULT_DATA_JSON = {
     entries: {},
 };
 
-function base64ToArrayBuffer(base64:string) {
+function base64ToArrayBuffer(base64:string): ArrayBuffer {
     const binaryString = atob(base64);
 
     const length = binaryString.length;
@@ -37,7 +37,7 @@ function base64ToArrayBuffer(base64:string) {
         bytes[i] = binaryString.charCodeAt(i);
     }
 
-    return bytes.buffer;
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
 function _arrayBufferToBase64( buffer:ArrayBuffer ):string {
@@ -50,7 +50,7 @@ function _arrayBufferToBase64( buffer:ArrayBuffer ):string {
     return btoa( binary );
 }
 
-async function deriveKey(password:string) {
+async function deriveKey(password:string):Promise<webcrypto.CryptoKey> {
   const te = new TextEncoder();
   const keyMaterial = await subtle.importKey(
       "raw",
@@ -77,7 +77,9 @@ async function deriveKey(password:string) {
 
 async function enc(str:string, password:string) {
   const te = new TextEncoder();
-  const iv = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ,11, 12]);
+  const iv = await webcrypto.getRandomValues(new Uint8Array(12));
+    console.log(`password ${password}`)
+  
   let key = await deriveKey(password);
 
   let ciphertext = await subtle.encrypt(
@@ -88,13 +90,18 @@ async function enc(str:string, password:string) {
     key, // The CryptoKey. You can get one with window.crypto.subtle.importKey().
     te.encode(str) // The data to encrypt
   );
-  return _arrayBufferToBase64(ciphertext);
+  let iv_cipher = new ArrayBuffer(iv.byteLength + ciphertext.byteLength);
+  const view = new Uint8Array(iv_cipher);
+  view.set(iv, 0);
+  view.set(new Uint8Array(ciphertext), iv.byteLength);
+  return _arrayBufferToBase64(iv_cipher);
 }
 
 async function dec(str:string, password:string):Promise<string> {
-  const iv = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ,11, 12]);
   let key = await deriveKey(password);
   let ciphertext = base64ToArrayBuffer(str);
+  const iv = ciphertext.slice(0, 12);
+  ciphertext = ciphertext.slice(12);
 
   let plaintext = await subtle.decrypt(
     {
@@ -107,13 +114,13 @@ async function dec(str:string, password:string):Promise<string> {
   return new TextDecoder().decode(plaintext);
 }
 
-async function loadDataJs(dataPath: string): Promise<DataJson> {
+async function loadDataJs(dataPath: string, password: string): Promise<DataJson> {
     try {
         const script = await fs.readFile(dataPath, 'utf8');
         const json = script.slice(SCRIPT_PREFIX.length);
         const parsed = JSON.parse(json);
         let ciphertext = parsed.entries;
-        parsed.entries = JSON.parse(await dec(ciphertext, 'abcdefg'));
+        parsed.entries = JSON.parse(await dec(ciphertext, password));
         core.debug(`Loaded data.js at ${dataPath}`);
         return parsed;
     } catch (err) {
@@ -122,9 +129,9 @@ async function loadDataJs(dataPath: string): Promise<DataJson> {
     }
 }
 
-async function storeDataJs(dataPath: string, data: DataJson) {
+async function storeDataJs(dataPath: string, data: DataJson, password: string) {
     let plaintext = JSON.stringify(data.entries);
-    let ciphertext = await enc(plaintext, 'abcdefg');
+    let ciphertext = await enc(plaintext, password);
     const script = SCRIPT_PREFIX + JSON.stringify({
         'lastUpdate': data.lastUpdate,
         'repoUrl': data.repoUrl,
@@ -469,6 +476,7 @@ async function writeBenchmarkToGitHubPagesWithRetry(
         autoPush,
         skipFetchGhPages,
         maxItemsInChart,
+        password,
     } = config;
     const rollbackActions = new Array<() => Promise<void>>();
 
@@ -511,10 +519,10 @@ async function writeBenchmarkToGitHubPagesWithRetry(
 
     await io.mkdirP(benchmarkDataDirFullPath);
 
-    const data = await loadDataJs(dataPath);
+    const data = await loadDataJs(dataPath, password);
     const prevBench = addBenchmarkToDataJson(name, bench, data, maxItemsInChart);
 
-    await storeDataJs(dataPath, data);
+    await storeDataJs(dataPath, data, password);
 
     await git.cmd(extraGitArguments, 'add', path.join(benchmarkDataRelativeDirPath, 'data.js'));
     await addIndexHtmlIfNeeded(extraGitArguments, benchmarkDataRelativeDirPath, benchmarkBaseDir);
@@ -581,10 +589,12 @@ async function writeBenchmarkToGitHubPages(bench: Benchmark, config: Config): Pr
     }
 }
 
-async function loadDataJson(jsonPath: string): Promise<DataJson> {
+async function loadDataJson(jsonPath: string, password: string): Promise<DataJson> {
     try {
         const content = await fs.readFile(jsonPath, 'utf8');
-        const json: DataJson = JSON.parse(content);
+        const json = JSON.parse(content);
+        let ciphertext = json.entries;
+        json.entries = JSON.parse(await dec(ciphertext, password));
         core.debug(`Loaded external JSON file at ${jsonPath}`);
         return json;
     } catch (err) {
@@ -600,8 +610,8 @@ async function writeBenchmarkToExternalJson(
     jsonFilePath: string,
     config: Config,
 ): Promise<Benchmark | null> {
-    const { name, maxItemsInChart, saveDataFile } = config;
-    const data = await loadDataJson(jsonFilePath);
+    const { name, maxItemsInChart, saveDataFile, password } = config;
+    const data = await loadDataJson(jsonFilePath, password);
     const prevBench = addBenchmarkToDataJson(name, bench, data, maxItemsInChart);
 
     if (!saveDataFile) {
