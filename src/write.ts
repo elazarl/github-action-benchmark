@@ -98,6 +98,7 @@ async function enc(str:string, password:string) {
 }
 
 async function dec(str:string, password:string):Promise<string> {
+  console.log(`password=${password}`);
   let key = await deriveKey(password);
   let ciphertext = base64ToArrayBuffer(str);
   const iv = ciphertext.slice(0, 12);
