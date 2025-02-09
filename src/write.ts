@@ -9,6 +9,9 @@ import { Config, ToolType } from './config';
 import { DEFAULT_INDEX_HTML } from './default_index_html';
 import { leavePRComment } from './comment/leavePRComment';
 import { leaveCommitComment } from './comment/leaveCommitComment';
+import { webcrypto } from "crypto";
+const { subtle } = webcrypto;
+
 
 export type BenchmarkSuites = { [name: string]: Benchmark[] };
 export interface DataJson {
@@ -24,11 +27,94 @@ const DEFAULT_DATA_JSON = {
     entries: {},
 };
 
+function base64ToArrayBuffer(base64) {
+    const binaryString = atob(base64);
+
+    const length = binaryString.length;
+    const bytes = new Uint8Array(length);
+
+    for (let i = 0; i < length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    return bytes.buffer;
+}
+
+function _arrayBufferToBase64( buffer ) {
+    var binary = '';
+    var bytes = new Uint8Array( buffer );
+    var len = bytes.byteLength;
+    for (var i = 0; i < len; i++) {
+        binary += String.fromCharCode( bytes[ i ] );
+    }
+    return btoa( binary );
+}
+
+async function deriveKey(password) {
+  const te = new TextEncoder();
+  const keyMaterial = await subtle.importKey(
+      "raw",
+      new TextEncoder().encode(password),
+      { name: "PBKDF2" },
+      false,
+      ["deriveKey"]
+  );
+  const salt = te.encode('my very special sauce');
+  const key = await subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: 100000,
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"],
+  );
+  return key;
+}
+
+async function enc(str, password) {
+  const te = new TextEncoder();
+  const iv = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ,11, 12]);
+  let key = await deriveKey(password);
+
+  let ciphertext = await subtle.encrypt(
+    {
+      name: "AES-GCM", // CTR and CBC modes are also available.
+      iv // The initialization vector.
+    },
+    key, // The CryptoKey. You can get one with window.crypto.subtle.importKey().
+    te.encode(str) // The data to encrypt
+  );
+  return _arrayBufferToBase64(ciphertext);
+}
+
+async function dec(str, password) {
+  const te = new TextEncoder();
+  const iv = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ,11, 12]);
+  let key = await deriveKey(password);
+  let ciphertext = base64ToArrayBuffer(str);
+
+  let plaintext = await subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv 
+    },
+    key, 
+    ciphertext
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
 async function loadDataJs(dataPath: string): Promise<DataJson> {
     try {
         const script = await fs.readFile(dataPath, 'utf8');
         const json = script.slice(SCRIPT_PREFIX.length);
         const parsed = JSON.parse(json);
+        let ciphertext = parsed.entries;
+        parsed.entries = JSON.parse(dec(ciphertext, 'abcdefg'));
         core.debug(`Loaded data.js at ${dataPath}`);
         return parsed;
     } catch (err) {
@@ -38,6 +124,9 @@ async function loadDataJs(dataPath: string): Promise<DataJson> {
 }
 
 async function storeDataJs(dataPath: string, data: DataJson) {
+    let plaintext = JSON.stringify(data.entries);
+    let ciphertext = enc(plaintext, 'abcdefg');
+    data.entries = ciphertext;
     const script = SCRIPT_PREFIX + JSON.stringify(data, null, 2);
     await fs.writeFile(dataPath, script, 'utf8');
     core.debug(`Overwrote ${dataPath} for adding new data`);
