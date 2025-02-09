@@ -17,7 +17,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/benchmark-action/github-action-benchmark.git"
+    "url": "git+https://github.com/elazarl/github-action-benchmark.git"
   },
   "keywords": [
     "github",
